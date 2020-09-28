@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
     hostOutput = (float *)malloc(inputLength * sizeof(float));
     if(hostOutput == NULL)
     {
-        printf("CPU Memory Fatal Error = Can Not Allocate Enough Memory For Host Input Array 3.\nExiting ...\n");
+        printf("CPU Memory Fatal Error = Can Not Allocate Enough Memory For Host Output Array.\nExiting ...\n");
         cleanup();
         exit(EXIT_FAILURE);
     }
