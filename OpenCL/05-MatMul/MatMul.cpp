@@ -20,19 +20,17 @@ cl_kernel         oclKernel;            //compute kernel
 char *oclSourceCode = NULL;
 size_t sizeKernelCodeLength;
 
-//odd number 11444777 is delibrate illustration (Nvidea OpenCL Samples)
-int iNumberOfArrayElements = 11444777;
-size_t localWorkSize = 256;
-size_t globalWorkSize;
+size_t localWorkSize[2];
+size_t globalWorkSize[2];
 
-float *hostInput1   = NULL;
-float *hostInput2   = NULL;
-float *hostOutput   = NULL;
-float *gold         = NULL;
+float *hostA = NULL;
+float *hostB = NULL;
+float *hostC = NULL;
+float *CHost = NULL;
 
-cl_mem deviceInput1 = NULL;
-cl_mem deviceInput2 = NULL;
-cl_mem deviceOutput = NULL;
+cl_mem deviceA = NULL;
+cl_mem deviceB = NULL;
+cl_mem deviceC = NULL;
 
 float timeOnCPU;
 float timeOnGPU;
@@ -42,47 +40,72 @@ int main(void)
     //function declaration
     void fillArrayWithRandomNumbers(float *, int);
     size_t roundGlobalSizeToNearestMultipleOfLocalSize(int, unsigned int);
-    void vecAddHost(const float *, const float *, float *, int);
+    void matMulHost(float *, float *, float *, int, int, int);
     char* loadOclProgramSource(const char *, const char *, size_t *);
     void cleanup(void);
 
+    //variable declaration
+    int numARows;
+    int numAColumns;
+    int numBRows;
+    int numBColumns;
+    int numCRows;
+    int numCColumns;
+    int numCHostRows;
+    int numCHostColumns;
+
     //code
-    //allocate host memory 
-    hostInput1 = (float *)malloc(iNumberOfArrayElements * sizeof(float));
-    if(hostInput1 == NULL)
+    numARows = 4;
+    numAColumns = 4;
+    numBRows = 4;
+    numBColumns = 4;
+
+    numCRows = numARows;
+    numCColumns = numBColumns;
+
+    numCHostRows = numARows;
+    numCHostColumns = numBColumns;
+
+    int sizeA = numARows * numAColumns * sizeof(float);
+    int sizeB = numBRows * numBColumns * sizeof(float);
+    int sizeC = numCRows * numCColumns * sizeof(float);
+    int sizeCHost = numCHostRows * numCHostColumns * sizeof(float);
+
+    //allcate host memory
+    hostA = (float *)malloc(sizeA);
+    if(hostA == NULL)
     {
-        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Input Array 1.\nExiting ...\n");
-        cleanup();
+        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Input Matrix A.\nExiting Now ...\n");
         exit(EXIT_FAILURE);
     }
 
-    hostInput2 = (float *)malloc(iNumberOfArrayElements * sizeof(float));
-    if(hostInput2 == NULL)
+    hostB = (float *)malloc(sizeB);
+    if(hostB == NULL)
     {
-        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Input Array 2.\nExiting ...\n");
+        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Input Matrix B.\nExiting Now ...\n");
         cleanup();
-        exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);        
     }
 
-    hostOutput = (float *)malloc(iNumberOfArrayElements * sizeof(float));
-    if(hostOutput == NULL)
+    hostC = (float *)malloc(sizeC);
+    if(hostC == NULL)
     {
-        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Output Array.\nExiting ...\n");
+        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Output Matrix C.\nExiting Now ...\n");
         cleanup();
-        exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);        
     }
 
-    gold = (float *)malloc(iNumberOfArrayElements * sizeof(float));
-    if(gold == NULL)
+    CHost = (float *)malloc(sizeCHost);
+    if(CHost == NULL)
     {
-        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Gold Output Array.\nExiting ...\n");
+        printf("CPU Memory Fatal Error - Can Not Allocate Enough Memory For Host Output Matrix CHost.\nExiting Now ...\n");
         cleanup();
-        exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);        
     }
 
-    //fill above input host vectors with arbitary but hard coded data
-    fillArrayWithRandomNumbers(hostInput1, iNumberOfArrayElements);
-    fillArrayWithRandomNumbers(hostInput2, iNumberOfArrayElements);
+    //fill above input arrays with random float numbers
+    fillArrayWithRandomNumbers(hostA, numARows * numAColumns);
+    fillArrayWithRandomNumbers(hostB, numBRows * numBColumns);
 
     //get OpenCL supporting platform's ID
     ret_ocl = clGetPlatformIDs(1, &oclPlatformID, NULL);
@@ -125,7 +148,7 @@ int main(void)
     }    
 
     //create OpenCL program from .cl
-    oclSourceCode = loadOclProgramSource("VecAdd.cl", "", &sizeKernelCodeLength);
+    oclSourceCode = loadOclProgramSource("MatMul.cl", "", &sizeKernelCodeLength);
 
     cl_int status = 0;
     oclProgram = clCreateProgramWithSource(oclContext, 1, (const char **)&oclSourceCode, &sizeKernelCodeLength, &ret_ocl);
@@ -152,7 +175,7 @@ int main(void)
     }
 
     //create OpenCL kernel
-    oclKernel = clCreateKernel(oclProgram, "vecAdd", &ret_ocl);
+    oclKernel = clCreateKernel(oclProgram, "matrixMultiply", &ret_ocl);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clCreateKernel() Failed : %d. Exiting Now ...\n", ret_ocl);
@@ -160,9 +183,10 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    int size = iNumberOfArrayElements * sizeof(cl_float);
+    int size = (numCRows * numCColumns) * sizeof(cl_float);
+
     //allocate device memory
-    deviceInput1 = clCreateBuffer(oclContext, CL_MEM_READ_ONLY, size, NULL, &ret_ocl);
+    deviceA = clCreateBuffer(oclContext, CL_MEM_READ_ONLY, size, NULL, &ret_ocl);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clCreateBuffer() Failed For 1st Input Array : %d. Exiting Now ...\n", ret_ocl);
@@ -170,7 +194,7 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    deviceInput2 = clCreateBuffer(oclContext, CL_MEM_READ_ONLY, size, NULL, &ret_ocl);
+    deviceB = clCreateBuffer(oclContext, CL_MEM_READ_ONLY, size, NULL, &ret_ocl);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clCreateBuffer() Failed For 2nd Input Array : %d. Exiting Now ...\n", ret_ocl);
@@ -178,7 +202,7 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    deviceOutput = clCreateBuffer(oclContext, CL_MEM_WRITE_ONLY, size, NULL, &ret_ocl);
+    deviceC = clCreateBuffer(oclContext, CL_MEM_WRITE_ONLY, size, NULL, &ret_ocl);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clCreateBuffer() Failed For Output Array : %d. Exiting Now ...\n", ret_ocl);
@@ -188,7 +212,7 @@ int main(void)
 
     //set OpenCL kernel arguments
     //set 1st argument
-    ret_ocl = clSetKernelArg(oclKernel, 0, sizeof(cl_mem), (void *)&deviceInput1);
+    ret_ocl = clSetKernelArg(oclKernel, 0, sizeof(cl_mem), (void *)&deviceA);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clSetKernelArg() Failed For 1st Argument : %d. Exiting Now ...\n", ret_ocl);
@@ -197,7 +221,7 @@ int main(void)
     }
 
     //set 2nd argument
-    ret_ocl = clSetKernelArg(oclKernel, 1, sizeof(cl_mem), (void *)&deviceInput2);
+    ret_ocl = clSetKernelArg(oclKernel, 1, sizeof(cl_mem), (void *)&deviceB);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clSetKernelArg() Failed For 2nd Argument : %d. Exiting Now ...\n", ret_ocl);
@@ -206,7 +230,7 @@ int main(void)
     }
 
     //set 3rd argument
-    ret_ocl = clSetKernelArg(oclKernel, 2, sizeof(cl_mem), (void *)&deviceOutput);
+    ret_ocl = clSetKernelArg(oclKernel, 2, sizeof(cl_mem), (void *)&deviceC);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clSetKernelArg() Failed For 3rd Argument : %d. Exiting Now ...\n", ret_ocl);
@@ -215,7 +239,7 @@ int main(void)
     }
 
     //set 4th argument
-    ret_ocl = clSetKernelArg(oclKernel, 3, sizeof(cl_int), (void *)&iNumberOfArrayElements);
+    ret_ocl = clSetKernelArg(oclKernel, 3, sizeof(cl_int), (void *)&numARows);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clSetKernelArg() Failed For 4th Argument : %d. Exiting Now ...\n", ret_ocl);
@@ -223,8 +247,53 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
+    //set 5th argument
+    ret_ocl = clSetKernelArg(oclKernel, 4, sizeof(cl_int), (void *)&numAColumns);
+    if(ret_ocl != CL_SUCCESS)
+    {
+        printf("OpenCL Error - clSetKernelArg() Failed For 5th Argument : %d. Exiting Now ...\n", ret_ocl);
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
+    //set 6th argument
+    ret_ocl = clSetKernelArg(oclKernel, 5, sizeof(cl_int), (void *)&numBRows);
+    if(ret_ocl != CL_SUCCESS)
+    {
+        printf("OpenCL Error - clSetKernelArg() Failed For 6th Argument : %d. Exiting Now ...\n", ret_ocl);
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
+    //set 7th argument
+    ret_ocl = clSetKernelArg(oclKernel, 6, sizeof(cl_int), (void *)&numBColumns);
+    if(ret_ocl != CL_SUCCESS)
+    {
+        printf("OpenCL Error - clSetKernelArg() Failed For 7th Argument : %d. Exiting Now ...\n", ret_ocl);
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
+    //set 8th argument
+    ret_ocl = clSetKernelArg(oclKernel, 7, sizeof(cl_int), (void *)&numCRows);
+    if(ret_ocl != CL_SUCCESS)
+    {
+        printf("OpenCL Error - clSetKernelArg() Failed For 8th Argument : %d. Exiting Now ...\n", ret_ocl);
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
+    //set 9th argument
+    ret_ocl = clSetKernelArg(oclKernel, 8, sizeof(cl_int), (void *)&numCColumns);
+    if(ret_ocl != CL_SUCCESS)
+    {
+        printf("OpenCL Error - clSetKernelArg() Failed For 9th Argument : %d. Exiting Now ...\n", ret_ocl);
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
     //write above input device buffer to device memory
-    ret_ocl = clEnqueueWriteBuffer(oclCommandQueue, deviceInput1, CL_FALSE, 0, size, hostInput1, 0, NULL, NULL);
+    ret_ocl = clEnqueueWriteBuffer(oclCommandQueue, deviceA, CL_FALSE, 0, size, hostA, 0, NULL, NULL);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clEnqueueWriteBuffer() Failed For 1st Input Device Buffer : %d. Exiting Now ...\n", ret_ocl);
@@ -232,7 +301,7 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    ret_ocl = clEnqueueWriteBuffer(oclCommandQueue, deviceInput2, CL_FALSE, 0, size, hostInput2, 0, NULL, NULL);
+    ret_ocl = clEnqueueWriteBuffer(oclCommandQueue, deviceB, CL_FALSE, 0, size, hostB, 0, NULL, NULL);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clEnqueueWriteBuffer() Failed For 2nd Input Device Buffer : %d. Exiting Now ...\n", ret_ocl);
@@ -241,14 +310,18 @@ int main(void)
     }
 
     //run the kernel
-    globalWorkSize = roundGlobalSizeToNearestMultipleOfLocalSize(localWorkSize, iNumberOfArrayElements);
+    localWorkSize[0] = 4;
+    localWorkSize[1] = 4;
+
+    globalWorkSize[0] = roundGlobalSizeToNearestMultipleOfLocalSize(localWorkSize[0], numCColumns);
+    globalWorkSize[1] = roundGlobalSizeToNearestMultipleOfLocalSize(localWorkSize[1], numCRows);
 
     //start timer 
     StopWatchInterface *timer = NULL;
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
 
-    ret_ocl = clEnqueueNDRangeKernel(oclCommandQueue, oclKernel, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
+    ret_ocl = clEnqueueNDRangeKernel(oclCommandQueue, oclKernel, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clEnqueueNDRangeKernel() Failed : %d. Exiting Now ...\n", ret_ocl);
@@ -266,7 +339,7 @@ int main(void)
     timer = NULL;
 
     //read from device to host
-    ret_ocl = clEnqueueReadBuffer(oclCommandQueue, deviceOutput, CL_TRUE, 0, size, hostOutput, 0, NULL, NULL);
+    ret_ocl = clEnqueueReadBuffer(oclCommandQueue, deviceC, CL_TRUE, 0, size, hostC, 0, NULL, NULL);
     if(ret_ocl != CL_SUCCESS)
     {
         printf("OpenCL Error - clEnqueueReadBuffer() Failed : %d. Exiting Now ...\n", ret_ocl);
@@ -274,17 +347,17 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-    vecAddHost(hostInput1, hostInput2, gold, iNumberOfArrayElements);
+    matMulHost(hostA, hostB, CHost, numAColumns, numCHostRows, numCHostColumns);
 
     //compare results for golden-host
     const float epsilon = 0.000001f;
     bool bAccuracy = true;
     int breakValue = 0;
     int i;
-    for(i = 0; i < iNumberOfArrayElements; i++)
+    for(i = 0; i < (numARows * numAColumns); i++)
     {
-        float val1 = gold[i];
-        float val2 = hostOutput[i];
+        float val1 = CHost[i];
+        float val2 = hostC[i];
         
         if(fabs(val1 - val2) > epsilon)
         {
@@ -305,13 +378,13 @@ int main(void)
     else
         sprintf(str, "%s", "Not All Comparison Of Output Arrays On CPU And GPU Are Accurate Within The Limit Of 0.000001");
 
-    printf("\n1st Array Is From 0th Element %0.6f to %dth Element %0.6f\n", hostInput1[0], iNumberOfArrayElements - 1, hostInput1[iNumberOfArrayElements - 1]);
-    printf("2nd Array Is From 0th Element %0.6f to %dth Element %0.6f\n", hostInput2[0], iNumberOfArrayElements - 1, hostInput2[iNumberOfArrayElements - 1]);
-    printf("\nGlobal Work Size = %u And Local Work Size = %u\n", (unsigned int)globalWorkSize, (unsigned int)localWorkSize);
-    printf("\nSum Of Each Element From Above 2 Arrays Creates 3rd Array As : \n");
-    printf("3rd Array Is From 0th Element %0.6f to %dth Element %0.6f\n", hostOutput[0], iNumberOfArrayElements - 1, hostOutput[iNumberOfArrayElements - 1]);
-    printf("\nThe Time Taken To Do Above Addition On CPU = %0.6f (ms)\n", timeOnCPU);
-    printf("The Time Taken To Do Above Addition On GPU = %0.6f (ms)\n", timeOnGPU);
+    printf("\n1st Matrix Is From 0th Element %0.6f to %dth Element %0.6f\n", hostA[0], (numARows * numAColumns) - 1, hostA[(numARows * numAColumns) - 1]);
+    printf("2nd Matrix Is From 0th Element %0.6f to %dth Element %0.6f\n", hostB[0], (numBRows * numBColumns) - 1, hostB[(numBRows * numBColumns) - 1]);
+    printf("\nGlobal Work Size = (%u, %u) And Local Work Size = (%u, %u)\n", (unsigned int)globalWorkSize[0], (unsigned int)globalWorkSize[1], (unsigned int)localWorkSize[0], (unsigned int)localWorkSize[1]);
+    printf("\nMultiplication Of Above 2 Matrices Creates 3rd Matrix As : \n");
+    printf("3rd Matrix Is From 0th Element %0.6f to %dth Element %0.6f\n", hostC[0], (numCRows * numCColumns) - 1, hostC[(numCRows * numCColumns) - 1]);
+    printf("\nThe Time Taken To Do Above Calculations On CPU = %0.6f (ms)\n", timeOnCPU);
+    printf("The Time Taken To Do Above Calculations On GPU = %0.6f (ms)\n", timeOnGPU);
     printf("%s\n", str);
 
     //total cleanup
@@ -355,47 +428,47 @@ void cleanup(void)
     }
 
     //free allocated device memory
-    if(deviceOutput)
+    if(deviceA)
     {
-        clReleaseMemObject(deviceOutput);
-        deviceOutput = NULL;
+        clReleaseMemObject(deviceA);
+        deviceA = NULL;
     }
 
-    if(deviceInput2)
+    if(deviceB)
     {
-        clReleaseMemObject(deviceInput2);
-        deviceInput2 = NULL;
+        clReleaseMemObject(deviceB);
+        deviceB = NULL;
     }
 
-    if(deviceInput1)
+    if(deviceC)
     {
-        clReleaseMemObject(deviceInput1);
-        deviceInput1 = NULL;
+        clReleaseMemObject(deviceC);
+        deviceC = NULL;
     }
 
     //free allocated host memory
-    if(gold)
+    if(CHost)
     {
-        free(gold);
-        gold = NULL;
+        free(CHost);
+        CHost = NULL;
     }
 
-    if(hostOutput)
+    if(hostC)
     {
-        free(hostOutput);
-        hostOutput = NULL;
+        free(hostC);
+        hostC = NULL;
     }
 
-    if(hostInput2)
+    if(hostB)
     {
-        free(hostInput2);
-        hostInput2 = NULL;
+        free(hostB);
+        hostB = NULL;
     }
 
-    if(hostInput1)
+    if(hostA)
     {
-        free(hostInput1);
-        hostInput1 = NULL;
+        free(hostA);
+        hostA = NULL;
     }
 }
 
@@ -422,18 +495,28 @@ size_t roundGlobalSizeToNearestMultipleOfLocalSize(int local_size, unsigned int 
 }
 
 //Golden host vector addition function 
-void vecAddHost(const float *in1, const float *in2, float *out, int iNumElements)
+void matMulHost(float *A, float *B, float *C, int iAColumns, int iCRows, int iCColumns)
 {
-    int i;
-
     //start timer
     StopWatchInterface *timer = NULL;
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
 
-    for(i = 0; i < iNumElements; i++)
+    for(int i = 0; i < iCRows; i++)
     {
-        out[i] = in1[i] + in2[i];
+        for(int j = 0; j < iCColumns; j++)
+        {
+            float sum = 0.0f;
+            for(int k = 0; k < iAColumns; k++)
+            {
+                float a = A[i * iAColumns + k];
+                float b = B[k * iCColumns + j];
+
+                sum += a * b;
+            }
+
+            C[i * iCColumns + j] = sum;
+        }
     }
 
     //stop timer
@@ -499,3 +582,4 @@ char *loadOclProgramSource(const char *fileName, const char *preamble, size_t *s
 
     return (sourceString);
 }
+
