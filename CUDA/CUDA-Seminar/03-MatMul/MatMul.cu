@@ -4,7 +4,7 @@
 
 #include "helper_timer.h"   //for time calculation
 
-#define BLOCK_WIDTH 4
+#define BLOCK_WIDTH 16
 
 //variable declaration
 float *hostA = NULL;
@@ -62,10 +62,10 @@ int main(int argc, char *argv[])
     int numCHostColumns;
 
     //code
-    numARows = 4;
-    numAColumns = 4;
-    numBRows = 4;
-    numBColumns = 4;
+    numARows = 16;
+    numAColumns = 16;
+    numBRows = 16;
+    numBColumns = 16;
 
     numCRows = numARows;
     numCColumns = numBColumns;
